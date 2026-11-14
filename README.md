@@ -23,14 +23,24 @@ el servidor, independientemente de lo que muestre la interfaz.
 ## Estructura
 
 ```
-supabase/migrations/   0001 esquema · 0002 acceso y RLS · 0003 catálogos
+supabase/migrations/   0001 esquema · 0002 acceso y RLS · 0003 catálogos · 0004 catálogos únicos · 0005 permisos de asignaciones
 src/tipos/             modelo de dominio (diagrama de clases)
 src/negocio/           lógica pura, sin UI ni red (probada en tests/)
 src/datos/             acceso a Supabase y sesión
 src/presentacion/      pantallas
 tests/                 pruebas unitarias (vitest) — base de la Actividad 14
+tests/sql/             pruebas de servidor por rol (PostgreSQL local, NO en Supabase)
 docs/DECISIONES.md     registro de decisiones (ADR)
 ```
+
+## Pantallas (v1.0 en construcción)
+
+| Rol | Pantallas | Requerimientos |
+|---|---|---|
+| Todos | Entrar · Soy instructor (registro) · Tengo un código (activar cuenta) | RS-10, RS-03 (CU-01, CU-12) |
+| Entrenador | Rutinas (crear, editar, eliminar) · Clientes (invitar, asignar rutina) | RS-01, RS-03 |
+| Nutriólogo | Planes con macros en vivo · Clientes (invitar, asignar plan) | RS-02, RS-03 |
+| Cliente | Hoy (iteración 3) | RS-06, RS-07 |
 
 ## Cómo trabajar
 
