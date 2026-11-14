@@ -23,6 +23,31 @@ export async function iniciarSesion(correo: string, contrasena: string): Promise
   return perfil;
 }
 
+/**
+ * Traduce los errores de Supabase Auth que puede ver el usuario. Los demás se
+ * muestran genéricos y el detalle queda en consola (RS-10).
+ */
+function errorAuth(e: { code?: string; message: string }): Error {
+  console.warn("[auth]", e.code ?? "", e.message);
+  switch (e.code) {
+    case "over_email_send_rate_limit":
+      return new Error("Se alcanzó el límite de correos del servidor. Intente de nuevo en unos minutos o avise al administrador (revisar que la confirmación de correo esté desactivada).");
+    case "email_not_confirmed":
+      return new Error("La cuenta existe pero su correo no está confirmado. Avise a su instructor o al administrador.");
+    case "weak_password":
+      return new Error(`Error de validación: El campo Contraseña debe ser más segura (mínimo ${MIN_CONTRASENA} caracteres). Por favor corregir antes de guardar.`);
+    case "user_already_exists":
+      return new Error("Ya existe una cuenta con ese correo. Inicie sesión.");
+    case "email_provider_disabled":
+    case "signup_disabled":
+      return new Error("El registro está deshabilitado temporalmente. Avise al administrador.");
+    default:
+      return new Error("No se pudo completar la operación. Intente de nuevo.");
+  }
+}
+
+const yaRegistrado = (e: { code?: string; message: string }) => e.code === "user_already_exists" || /registered/i.test(e.message);
+
 function validarCredenciales(correo: string, contrasena: string) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(correo.trim())) throw new Error("Error de validación: El campo Correo debe ser un correo electrónico válido. Por favor corregir antes de guardar.");
   if (contrasena.length < MIN_CONTRASENA) throw new Error(`Error de validación: El campo Contraseña debe ser de al menos ${MIN_CONTRASENA} caracteres. Por favor corregir antes de guardar.`);
@@ -33,7 +58,7 @@ export async function registrarInstructor(nombre: string, correo: string, contra
   if (nombre.trim().length < 2) throw new Error("Error de validación: El campo Nombre debe ser un texto de al menos 2 caracteres. Por favor corregir antes de guardar.");
   validarCredenciales(correo, contrasena);
   const { data, error } = await supabase.auth.signUp({ email: correo.trim(), password: contrasena, options: { data: { nombre: nombre.trim(), rol } } });
-  if (error) throw new Error(/registered/i.test(error.message) ? "Ya existe una cuenta con ese correo. Inicie sesión." : error.message);
+  if (error) throw errorAuth(error);
   if (!data.session) throw new Error("Cuenta creada. Revise su correo para confirmarla antes de entrar.");
   const p = await perfilActual();
   if (!p) throw new Error("La cuenta se creó pero no tiene perfil. Contacte al administrador.");
@@ -50,9 +75,9 @@ export async function activarCuentaCliente(correo: string, contrasena: string, t
   if (!esTokenValido(token)) throw new Error("Error de validación: El campo Código de invitación debe ser el código de 64 caracteres que le dio su instructor. Por favor corregir antes de guardar.");
   const alta = await supabase.auth.signUp({ email: correo.trim(), password: contrasena, options: { data: { rol: "CLIENTE" } } });
   if (alta.error) {
-    if (!/registered/i.test(alta.error.message)) throw new Error(alta.error.message);
+    if (!yaRegistrado(alta.error)) throw errorAuth(alta.error);
     const { error } = await supabase.auth.signInWithPassword({ email: correo.trim(), password: contrasena });
-    if (error) throw new Error("Ya existe una cuenta con ese correo y la contraseña no coincide.");
+    if (error) throw error.code === "email_not_confirmed" ? errorAuth(error) : new Error("Ya existe una cuenta con ese correo y la contraseña no coincide.");
   } else if (!alta.data.session) {
     throw new Error("Cuenta creada. Revise su correo para confirmarla y vuelva a canjear el código.");
   }
