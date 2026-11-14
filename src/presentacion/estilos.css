@@ -100,3 +100,34 @@ details summary { cursor: pointer; list-style: none; } details summary::-webkit-
 .codigo-ok { margin-top: 12px; padding: 12px; border: 1px solid var(--acento); border-radius: 10px; }
 .asignaciones { list-style: none; padding: 0; margin: 10px 0 0; }
 .asignaciones li { padding: 6px 0; border-top: 1px solid var(--borde); font-size: 0.92rem; }
+
+/* Vista del día (cliente) */
+.progreso-txt { margin-bottom: 8px; }
+.barra-progreso { height: 8px; background: var(--panel-2); border-radius: 99px; overflow: hidden; margin: 6px 0; }
+.barra-progreso > div { height: 100%; background: var(--acento); border-radius: 99px; transition: width 0.25s ease; }
+.item { display: flex; gap: 12px; align-items: flex-start; transition: opacity 0.2s; }
+.item-hecho { opacity: 0.6; }
+.item-hecho .item-cuerpo > strong { text-decoration: line-through; }
+.item-cuerpo { flex: 1; min-width: 0; }
+.check { flex: none; width: 44px; height: 44px; margin: 0; padding: 0; border-radius: 50%; border: 2px solid var(--borde);
+  background: transparent; color: #06130b; font-size: 1.3rem; line-height: 1; }
+.check:hover { background: var(--panel-2); border-color: var(--acento); }
+.check.hecho { background: var(--acento); border-color: var(--acento); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.chips span { font-size: 0.82rem; padding: 3px 8px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--borde); }
+.guia summary { color: var(--tinta-2); font-size: 0.85rem; cursor: pointer; }
+.guia p { margin: 6px 0; font-size: 0.9rem; }
+.guia a { color: var(--acento); }
+.porciones-dia { margin: 6px 0 0; padding-left: 18px; }
+.porciones-dia li { margin: 2px 0; }
+.descanso .grande { font-size: 2.5rem; margin: 0; }
+.centrado { text-align: center; }
+
+/* Panel de adherencia */
+.pestanas.compactas { margin: 0; }
+.pestanas.compactas button { flex: none; padding: 6px 12px; }
+.adh-valor { font-weight: 700; font-size: 1.1rem; }
+.adh-bajo { border-left: 4px solid var(--alerta); } .adh-bajo .barra-progreso > div { background: var(--alerta); } .adh-bajo .adh-valor { color: var(--alerta); }
+.adh-medio { border-left: 4px solid var(--aviso); } .adh-medio .barra-progreso > div { background: var(--aviso); } .adh-medio .adh-valor { color: var(--aviso); }
+.adh-alto { border-left: 4px solid var(--acento); } .adh-alto .adh-valor { color: var(--acento); }
+.adh-nd { border-left: 4px solid var(--borde); } .adh-nd .adh-valor { color: var(--tinta-2); font-size: 0.9rem; }

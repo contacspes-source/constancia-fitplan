@@ -10,6 +10,8 @@ import { $, esc } from "./dom";
 import { pantallaRutinas } from "./rutinas";
 import { pantallaPlanes } from "./planes";
 import { pantallaClientes } from "./clientes";
+import { pantallaHoy } from "./hoy";
+import { pantallaAdherencia } from "./adherencia";
 
 export interface Contexto { perfil: Perfil; cont: HTMLElement; params: string[] }
 type Pantalla = (ctx: Contexto) => Promise<void> | void;
@@ -24,13 +26,15 @@ const RUTAS: Record<Rol, Ruta[]> = {
   ENTRENADOR: [
     { clave: "rutinas", etiqueta: "Rutinas", pantalla: pantallaRutinas },
     { clave: "clientes", etiqueta: "Clientes", pantalla: pantallaClientes },
+    { clave: "adherencia", etiqueta: "Adherencia", pantalla: pantallaAdherencia },
   ],
   NUTRIOLOGO: [
     { clave: "planes", etiqueta: "Planes", pantalla: pantallaPlanes },
     { clave: "clientes", etiqueta: "Clientes", pantalla: pantallaClientes },
+    { clave: "adherencia", etiqueta: "Adherencia", pantalla: pantallaAdherencia },
   ],
   CLIENTE: [
-    { clave: "hoy", etiqueta: "Hoy", pantalla: pantallaPendiente("Hoy", "Tu vista del día llega en la siguiente iteración.") },
+    { clave: "hoy", etiqueta: "Hoy", pantalla: pantallaHoy },
   ],
   ADMIN: [
     { clave: "admin", etiqueta: "Administración", pantalla: pantallaPendiente("Administración", "Los catálogos se administran desde la base de datos en esta versión.") },
