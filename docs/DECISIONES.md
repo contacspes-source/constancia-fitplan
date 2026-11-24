@@ -66,3 +66,42 @@ RS-08 historial gráfico, RS-09 material multimedia (el catálogo existe solo
 como datos), CU-15 comentarios (tabla creada, sin interfaz) y la interfaz
 del Administrador (catálogos por SQL). Base: priorización MoSCoW de la ERS
 y modelo incremental de la Actividad 4.
+
+## ADR-005 · Interfaz de la iteración 2 (23 nov 2026)
+
+**Contexto.** La base de datos y la lógica de negocio estaban listas y probadas,
+pero la interfaz solo tenía el inicio de sesión. Faltan dos semanas para la entrega.
+
+**Decisión.**
+1. **Sin framework.** Pantallas en TypeScript + DOM (una función por vista), para
+   no agregar dependencias ni curva de aprendizaje. Todo texto capturado por
+   usuarios se escapa antes de insertarlo (`ui.esc`).
+2. **Invitación por enlace.** No hay servidor de correo propio: el instructor
+   copia un enlace `#activar=<código>` o el código y lo comparte. El código se
+   genera con `crypto.getRandomValues` (256 bits).
+3. **Edición sin perder historial.** Al editar una rutina se actualizan los
+   ejercicios por id y al editar un plan se conservan los tiempos de comida por
+   tipo, porque las marcas de cumplimiento apuntan a esas filas (RS-05, RS-07).
+4. **Vista del día y marcas en el servidor** (migración 0006): la pantalla Hoy
+   usa `vista_del_dia()` y `marcar_cumplimiento()`, que fijan la fecha, validan
+   que el elemento esté programado hoy, evitan duplicados y ponen el sello.
+5. **Confirmación de correo opcional.** Si Supabase la exige, la app lo indica
+   y el cliente captura su código después de iniciar sesión.
+
+**Consecuencias.** RS-01, RS-02, RS-03, RS-05, RS-06 y RS-07 tienen interfaz
+completa. Validación en dos capas: navegador (mensajes junto al campo) y
+servidor (CHECK, trigger, RLS). Guion de prueba en `docs/PRUEBAS_MANUALES.md`.
+
+**Ajuste tras pruebas manuales (23 nov).** El panel de adherencia mezclaba
+ejercicios y comidas en un solo número. Migración 0007 (`adherencia_por_area`)
+devuelve los conteos por área; cada instructor ve primero la suya y la lista se
+ordena por ella. El total de RS-05 se sigue mostrando. Si la 0007 no está
+aplicada, la pantalla usa la función anterior sin desglose.
+
+**Ajuste tras pruebas manuales (24 nov).** El editor de rutinas mostraba una lista
+con un selector de día por ejercicio; no se veía qué días eran de descanso y el
+equipo llegó a crear una rutina "descanso" con un ejercicio ficticio. El editor
+ahora se organiza por semana (lunes a domingo): cada día vacío se muestra como
+"😴 Descanso", cada día tiene su botón "+ Ejercicio" y "Hacer día de descanso".
+No cambia el modelo de datos: un día de descanso es un día sin filas en
+RUTINA_EJERCICIO, como ya lo interpretaba la Vista del Día (RS-06).

@@ -1,120 +1,111 @@
 /**
- * presentacion/hoy.ts — Vista única del día del cliente (RS-06, CU-13) y registro
- * de cumplimiento (RS-07, CU-14). Es la pantalla de entrada del cliente: se llega
- * con un solo clic desde el inicio de sesión (RS-14).
- * Las marcas se reflejan al instante y se revierten si el servidor las rechaza.
+ * presentacion/hoy.ts — Vista Única del Día del cliente (RS-06, RS-14) y
+ * registro de cumplimiento (RS-07). La fecha la define el servidor.
  */
+import { activarCodigo, cargarDia, clienteActivado, marcarCumplimiento, type DiaCliente } from "@/datos/repositorios";
+import { aportePorcion, sumarTotales } from "@/negocio/nutricion";
 import { ETIQUETA_COMIDA } from "@/tipos";
-import { marcarCumplimiento, obtenerVistaDelDia, type Elemento } from "@/datos/dia";
-import { estadoDelDia, progresoDelDia, textoCarga, textoDescanso, textoPorcion, totalesComida, type VistaDelDia } from "@/negocio/dia";
-import { redondearTotales } from "@/negocio/nutricion";
-import type { Contexto } from "./app";
-import { $, aviso, cargando, esc } from "./dom";
+import type { Perfil } from "@/tipos";
+import { tokenDelEnlace } from "./login";
+import { textoTotales } from "./planes";
+import { $, avisar, cargando, esc, formatoFecha, mostrarErrores } from "./ui";
 
-/** Solo enlaces http(s): esc() evita romper el HTML, pero no bloquea "javascript:". */
-const urlSegura = (u: string | null) => (u && /^https?:\/\//i.test(u.trim()) ? u.trim() : null);
-
-const DIAS = ["", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
-
-function fechaLarga(iso: string, dow: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  const mes = new Date(y, m - 1, d).toLocaleDateString("es-MX", { month: "long" });
-  return `${DIAS[dow]} ${d} de ${mes}`;
+export async function vistaHoy(cont: HTMLElement, perfil: Perfil) {
+  cargando(cont);
+  try {
+    if (!(await clienteActivado(perfil.id))) return formularioCodigo(cont, perfil, true);
+    pintar(cont, perfil, await cargarDia());
+  } catch (e) { cont.innerHTML = `<p class="error">${esc((e as Error).message)}</p>`; }
 }
 
-export async function pantallaHoy(ctx: Contexto) {
-  cargando(ctx.cont, "Cargando tu día…");
-  const vista = await obtenerVistaDelDia();
-  render(ctx, vista);
-}
+function pintar(cont: HTMLElement, perfil: Perfil, dia: DiaCliente) {
+  const total = dia.ejercicios.length + dia.comidas.length;
+  const hechos = dia.ejercicios.filter(e => e.completado).length + dia.comidas.filter(c => c.completado).length;
 
-function marca(completado: boolean, e: Elemento, etiqueta: string) {
-  return `<button class="check ${completado ? "hecho" : ""}" data-tipo="${e.tipo}" data-id="${e.id}"
-    aria-pressed="${completado}" aria-label="${completado ? "Desmarcar" : "Marcar como hecho"}: ${esc(etiqueta)}">${completado ? "✓" : ""}</button>`;
-}
-
-function render({ cont, perfil }: Contexto, v: VistaDelDia) {
-  const estado = estadoDelDia(v);
-  const nombre = perfil.nombre.split(" ")[0];
-  const encabezado = `<div class="encabezado"><div><h2>Hola, ${esc(nombre)}</h2><div class="meta">Hoy es ${fechaLarga(v.fecha, v.dia_semana)}</div></div></div>`;
-
-  if (estado === "SIN_PROGRAMA") {
-    cont.innerHTML = `${encabezado}
-      <div class="tarjeta vacio">
-        <p><strong>Aún no tienes un programa vigente.</strong></p>
-        <p>Contacta a tu entrenador o nutriólogo para que te asigne tu rutina y tu plan de alimentación.</p>
-      </div>`;
-    return;
-  }
-  if (estado === "DESCANSO") {
-    cont.innerHTML = `${encabezado}
-      <div class="tarjeta vacio descanso"><p class="grande">🧘</p><p><strong>Hoy es día de descanso programado. ¡Recupera energías!</strong></p></div>`;
-    return;
-  }
-
-  const p = progresoDelDia(v);
-  cont.innerHTML = `${encabezado}
-    <div class="tarjeta progreso" aria-live="polite">
-      <div class="progreso-txt"><strong id="p-hechos">${p.hechos} de ${p.total}</strong> <span class="meta">completados hoy</span></div>
-      <div class="barra-progreso"><div id="p-barra" style="width:${p.porcentaje}%"></div></div>
-    </div>
-
-    ${v.ejercicios.length ? `
-      <h3>🏋️ Entrenamiento ${v.rutina ? `<span class="meta">· ${esc(v.rutina)}</span>` : ""}</h3>
-      ${v.ejercicios.map((e) => `
-        <div class="tarjeta item ${e.completado ? "item-hecho" : ""}" data-item="ejercicio-${e.id}">
-          ${marca(e.completado, { tipo: "ejercicio", id: e.id }, e.nombre)}
-          <div class="item-cuerpo">
-            <strong>${esc(e.nombre)}</strong>
-            <div class="chips">
-              <span>${e.series} × ${esc(e.repeticiones)}</span>
-              <span>${textoCarga(e.carga_kg)}</span>
-              <span>Descanso ${textoDescanso(e.descanso_seg)}</span>
+  let cuerpo: string;
+  if (!dia.tieneProgramaVigente) {
+    cuerpo = `<div class="tarjeta vacio">No tienes ningún programa vigente.<br>Contacta a tu entrenador o nutriólogo para que te asigne uno.</div>`;
+  } else if (total === 0) {
+    cuerpo = `<div class="tarjeta vacio descanso">Hoy es día de descanso programado. ¡Recupera energías!</div>`;
+  } else {
+    cuerpo = `
+      <div class="tarjeta progreso">
+        <div class="fila-titulo"><span>Progreso de hoy</span><strong id="contador">${hechos} / ${total}</strong></div>
+        <div class="barra"><span id="barra-hoy" style="width:${Math.round((hechos / total) * 100)}%"></span></div>
+      </div>
+      ${dia.ejercicios.length ? `
+        <h2>🏋️ Entrenamiento <span class="sub">${esc(dia.rutina ?? "")}</span></h2>
+        ${dia.ejercicios.map(e => `
+          <label class="tarjeta check ${e.completado ? "hecho" : ""}">
+            <input type="checkbox" data-ej="${e.id}" ${e.completado ? "checked" : ""} />
+            <div>
+              <strong>${esc(e.nombre)}</strong>
+              <div class="datos"><span>${e.series} × ${esc(e.repeticiones)}</span><span>${e.carga_kg > 0 ? `${e.carga_kg} kg` : "Peso corporal"}</span><span>Descanso ${e.descanso_seg} s</span></div>
+              ${e.descripcion ? `<details><summary>Técnica</summary><p class="sub">${esc(e.descripcion)}</p></details>` : ""}
             </div>
-            <details class="guia">
-              <summary>Cómo hacerlo</summary>
-              <p>${e.descripcion ? esc(e.descripcion) : "Sin descripción disponible."}</p>
-              ${urlSegura(e.url_demostracion) ? `<a href="${esc(urlSegura(e.url_demostracion))}" target="_blank" rel="noopener">Ver demostración</a>` : `<p class="meta">No hay demostración en video para este ejercicio.</p>`}
-            </details>
-          </div>
-        </div>`).join("")}` : `<div class="tarjeta meta">Hoy no tienes entrenamiento programado.</div>`}
+          </label>`).join("")}` : (dia.rutina ? `<div class="tarjeta vacio">Hoy no tienes ejercicios: día de descanso del entrenamiento.</div>` : "")}
+      ${dia.comidas.length ? `
+        <h2>🍽️ Alimentación <span class="sub">${esc(dia.plan ?? "")}</span></h2>
+        <div class="tarjeta totales-plan"><div class="sub">Total del día</div><div class="macros">${textoTotales(sumarTotales(
+          dia.comidas.flatMap(c => c.porciones.map(p => aportePorcion({ alimento_id: p.alimento?.id ?? null, nombre_copia: p.nombre, cantidad: p.cantidad, unidad: p.unidad }, p.alimento)))))}</div></div>
+        ${dia.comidas.map(c => `
+          <label class="tarjeta check ${c.completado ? "hecho" : ""}">
+            <input type="checkbox" data-com="${c.id}" ${c.completado ? "checked" : ""} />
+            <div>
+              <strong>${ETIQUETA_COMIDA[c.tipo]}</strong>
+              <ul class="porciones">${c.porciones.map(p =>
+                `<li>${esc(p.nombre)} — ${p.cantidad} ${p.unidad === "G" ? "g" : p.unidad === "ML" ? "ml" : p.cantidad === 1 ? "pieza" : "piezas"}</li>`).join("")}</ul>
+            </div>
+          </label>`).join("")}` : ""}`;
+  }
 
-    ${v.comidas.length ? `
-      <h3>🥗 Alimentación ${v.plan ? `<span class="meta">· ${esc(v.plan)}</span>` : ""}</h3>
-      ${v.comidas.map((c) => {
-        const t = redondearTotales(totalesComida(c), 0);
-        return `
-        <div class="tarjeta item ${c.completado ? "item-hecho" : ""}" data-item="comida-${c.id}">
-          ${marca(c.completado, { tipo: "comida", id: c.id }, ETIQUETA_COMIDA[c.tipo])}
-          <div class="item-cuerpo">
-            <strong>${ETIQUETA_COMIDA[c.tipo]}</strong> <span class="meta">${t.kcal} kcal · P ${t.proteina} · C ${t.carbohidratos} · G ${t.grasa}</span>
-            <ul class="porciones-dia">${c.porciones.map((po) => `<li>${esc(po.nombre)} <span class="meta">${textoPorcion(po)}</span></li>`).join("")}</ul>
-          </div>
-        </div>`;
-      }).join("")}` : `<div class="tarjeta meta">Hoy no tienes plan de alimentación asignado.</div>`}
-    <p class="ayuda centrado">Puedes marcar y desmarcar hasta las 23:59 de hoy. Después, el día queda registrado.</p>`;
+  cont.innerHTML = `
+    <div class="hoy-encabezado"><h1>Hoy</h1><div class="sub">${esc(formatoFecha(dia.fecha))}</div></div>
+    ${cuerpo}
+    <details class="tarjeta"><summary>Tengo un código de otro instructor</summary><div id="caja-codigo"></div></details>`;
+  formularioCodigo($(cont, "#caja-codigo"), perfil, false);
 
-  const actualizarProgreso = () => {
-    const pr = progresoDelDia(v);
-    $("#p-hechos", cont).textContent = `${pr.hechos} de ${pr.total}`;
-    $("#p-barra", cont).style.width = `${pr.porcentaje}%`;
-  };
-
-  cont.querySelectorAll<HTMLButtonElement>(".check").forEach((b) => b.addEventListener("click", async () => {
-    const e: Elemento = { tipo: b.dataset.tipo as Elemento["tipo"], id: Number(b.dataset.id) };
-    const lista = e.tipo === "ejercicio" ? v.ejercicios : v.comidas;
-    const item = lista.find((x) => x.id === e.id)!;
-    const nuevo = !item.completado;
-    const pintar = (val: boolean) => {
-      item.completado = val;
-      b.classList.toggle("hecho", val); b.textContent = val ? "✓" : ""; b.setAttribute("aria-pressed", String(val));
-      b.closest(".item")?.classList.toggle("item-hecho", val);
-      actualizarProgreso();
-    };
-    pintar(nuevo);                      // respuesta inmediata
-    b.disabled = true;
-    try { await marcarCumplimiento(e, nuevo); }
-    catch (err) { pintar(!nuevo); aviso((err as Error).message, "error"); }   // revertir si el servidor rechaza
-    finally { b.disabled = false; }
+  cont.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach(chk => chk.addEventListener("change", async () => {
+    const elemento = chk.dataset.ej ? { rutina_ejercicio_id: Number(chk.dataset.ej) } : { tiempo_comida_id: Number(chk.dataset.com) };
+    chk.disabled = true;
+    try {
+      await marcarCumplimiento(elemento, chk.checked);
+      chk.closest(".check")!.classList.toggle("hecho", chk.checked);
+      const n = cont.querySelectorAll<HTMLInputElement>("input[type=checkbox]:checked").length;
+      $(cont, "#contador").textContent = `${n} / ${total}`;
+      $(cont, "#barra-hoy").style.width = `${Math.round((n / total) * 100)}%`;
+    } catch (e) {
+      chk.checked = !chk.checked;
+      avisar((e as Error).message, "error");
+      // Si cambió el día en el servidor, se recarga la vista con la fecha nueva.
+      if (/día en curso/.test((e as Error).message)) setTimeout(() => void vistaHoy(cont, perfil), 1500);
+    } finally { chk.disabled = false; }
   }));
+}
+
+/** Formulario para capturar un código de invitación estando ya dentro de la cuenta (CU-12). */
+function formularioCodigo(cont: HTMLElement, perfil: Perfil, pantallaCompleta: boolean) {
+  cont.innerHTML = `
+    ${pantallaCompleta ? `<div class="tarjeta"><h2>Activa tu cuenta</h2><p>Para ver tu programa, captura el código de invitación que te dio tu entrenador o nutriólogo.</p>` : ""}
+    <form class="f-codigo" novalidate>
+      <label>Código de invitación</label>
+      <input name="token" value="${esc(tokenDelEnlace() ?? "")}" autocomplete="off" spellcheck="false" />
+      <div class="error" hidden></div>
+      <button type="submit">Activar código</button>
+    </form>
+    ${pantallaCompleta ? `</div>` : ""}`;
+  const form = cont.querySelector<HTMLFormElement>(".f-codigo")!;
+  form.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const tok = form.querySelector<HTMLInputElement>("[name=token]")!.value.trim();
+    const err = form.querySelector<HTMLElement>(".error")!;
+    if (!/^[0-9a-f]{64}$/i.test(tok)) { mostrarErrores(err, ["El código debe tener 64 caracteres (letras a-f y números)."]); return; }
+    try {
+      await activarCodigo(tok);
+      history.replaceState(null, "", location.pathname);
+      avisar("Código activado.");
+      const raiz = document.getElementById("contenido") ?? cont;
+      void vistaHoy(raiz, perfil);
+    } catch (e) { mostrarErrores(err, [(e as Error).message]); }
+  });
 }

@@ -1,189 +1,216 @@
 /**
- * presentacion/clientes.ts — Cartera, invitaciones y asignaciones del instructor
- * (RS-03, CU-02 gestionar cartera, CU-03 código de invitación, CU-04 asignar programa).
- * El entrenador asigna rutinas; el nutriólogo, planes (Act. 12, actor Instructor).
+ * presentacion/clientes.ts — Cartera del instructor: panel de adherencia (RS-05),
+ * asignaciones con fechas (RS-03, CU-04) e invitaciones de 72 h (RS-03, CU-03).
+ * La usan el entrenador (asigna rutinas) y el nutriólogo (asigna planes).
  */
-import type { Asignacion } from "@/tipos";
 import {
-  cancelarInvitacion, crearAsignacion, crearInvitacion, eliminarAsignacion, listarAsignaciones,
-  listarCartera, listarInvitacionesPendientes, reemitirInvitacion, validarAltaCliente,
-  type AsignacionVista, type ClienteCartera, type Invitacion,
-} from "@/datos/clientes";
-import { listarRutinas } from "@/datos/rutinas";
-import { listarPlanes } from "@/datos/planes";
-import { estadoInvitacion, VIGENCIA_HORAS } from "@/negocio/invitacion";
-import { estaVigente } from "@/negocio/asignaciones";
-import type { Contexto } from "./app";
-import { $, $$, aviso, cargando, conBoton, confirmar, esc, fechaCorta, hoyISO, mostrarErrores, sumarDiasISO } from "./dom";
+  adherenciaCartera, crearAsignacion, crearInvitacion, eliminarAsignacion, eliminarInvitacion,
+  fechaServidor, listarAsignaciones, listarClientes, listarInvitaciones, listarPlanes, listarRutinas,
+  reemitirInvitacion, type AsignacionDetalle, type ClienteCartera, type Invitacion,
+} from "@/datos/repositorios";
+import { ordenarPorRiesgo, textoAdherencia, type Ventana } from "@/negocio/adherencia";
+import { estaVigente, validarAsignacion } from "@/negocio/asignaciones";
+import type { Asignacion, Perfil } from "@/tipos";
+import { $, avisar, cargando, confirmar, esc, mostrarErrores } from "./ui";
 
-interface Estado {
-  cartera: ClienteCartera[];
-  invitaciones: Invitacion[];
-  asignaciones: AsignacionVista[];
-  programas: { id: number; nombre: string }[];
-}
+let ventana: Ventana = 7;
 
-export async function pantallaClientes(ctx: Contexto) {
-  cargando(ctx.cont);
-  const esEntrenador = ctx.perfil.rol === "ENTRENADOR";
-  const [cartera, invitaciones, asignaciones, programas] = await Promise.all([
-    listarCartera(), listarInvitacionesPendientes(), listarAsignaciones(),
-    esEntrenador ? listarRutinas() : listarPlanes(),
-  ]);
-  render(ctx, { cartera, invitaciones, asignaciones, programas });
-}
-
-function render(ctx: Contexto, st: Estado) {
-  const { cont, perfil } = ctx;
+export async function vistaClientes(cont: HTMLElement, perfil: Perfil) {
+  cargando(cont);
   const esEntrenador = perfil.rol === "ENTRENADOR";
-  const tipoProg = esEntrenador ? "rutina" : "plan";
-  const hoy = hoyISO();
-
-  cont.innerHTML = `
-    <div class="encabezado"><h2>Mis clientes</h2></div>
-
-    <details class="tarjeta" id="invitar" ${st.cartera.length === 0 ? "open" : ""}>
-      <summary><strong>+ Registrar cliente</strong></summary>
-      <form novalidate id="f-invitar">
-        <p class="ayuda">Se genera un código de invitación válido por ${VIGENCIA_HORAS} horas. El cliente lo canjea en la pestaña "Tengo un código".</p>
-        <label for="inv-nombre">Nombre</label><input id="inv-nombre" autocomplete="off" />
-        <label for="inv-correo">Correo</label><input id="inv-correo" type="email" autocomplete="off" />
-        <div class="error" data-err hidden></div>
-        <button type="submit">Generar código</button>
-      </form>
-      <div id="codigo-generado"></div>
-    </details>
-
-    ${st.invitaciones.length ? `
-      <h3>Invitaciones pendientes</h3>
-      ${st.invitaciones.map((i) => {
-        const estado = estadoInvitacion(i);
-        return `
-        <div class="tarjeta fila-lista">
-          <div>
-            <strong>${esc(i.nombre)}</strong> <span class="meta">${esc(i.correo)}</span>
-            <div class="meta">${estado === "CADUCADA" ? `<span class="etiqueta alerta">Caducada</span>` : `Vence ${new Date(i.expira_en).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}`}</div>
-            ${estado === "VIGENTE" ? `<code class="token">${esc(i.token)}</code>` : ""}
+  try {
+    const [clientes, asignaciones, invitaciones, programas, hoy] = await Promise.all([
+      listarClientes(), listarAsignaciones(perfil.id), listarInvitaciones(),
+      esEntrenador ? listarRutinas() : listarPlanes(), fechaServidor(),
+    ]);
+    cont.innerHTML = `
+      <section class="tarjeta">
+        <div class="fila-titulo">
+          <h2>Adherencia</h2>
+          <div class="segmentado" role="group" aria-label="Ventana">
+            <button data-v="7" class="${ventana === 7 ? "activa" : ""}">7 días</button>
+            <button data-v="30" class="${ventana === 30 ? "activa" : ""}">30 días</button>
           </div>
-          <div class="acciones">
-            ${estado === "VIGENTE" ? `<button class="secundario chico" data-copiar="${esc(i.token)}">Copiar código</button>` : ""}
-            <button class="secundario chico" data-reemitir="${i.id}">Reemitir</button>
-            <button class="peligro chico" data-cancelar="${i.id}" data-nombre="${esc(i.nombre)}">Cancelar</button>
-          </div>
-        </div>`;
-      }).join("")}` : ""}
-
-    <h3>Cartera (${st.cartera.length})</h3>
-    ${st.cartera.length === 0 ? `<div class="tarjeta vacio">Cuando un cliente canjee su código aparecerá aquí.</div>` : ""}
-    ${st.cartera.map((c) => {
-      const propias = st.asignaciones.filter((a) => a.cliente_id === c.usuario_id);
-      return `
-      <div class="tarjeta" data-cliente="${esc(c.usuario_id)}">
-        <div class="fila-lista">
-          <div><strong>${esc(c.nombre)}</strong> <span class="meta">${esc(c.correo)}</span></div>
-          <button class="chico" data-abrir-asignar>Asignar ${tipoProg}</button>
         </div>
-        ${propias.length ? `<ul class="asignaciones">${propias.map((a) => {
-          const esMia = esEntrenador ? a.rutina_id !== null : a.plan_id !== null;
-          const vigente = estaVigente(a, hoy);
-          const nombre = a.programa ?? (a.rutina_id !== null ? "Rutina de su entrenador" : "Plan de su nutriólogo");
-          return `<li>
-            <span class="etiqueta ${vigente ? "ok" : ""}">${vigente ? "Vigente" : a.fecha_inicio > hoy ? "Programada" : "Concluida"}</span>
-            ${a.rutina_id !== null ? "🏋️" : "🥗"} ${esc(nombre)}
-            <span class="meta">${fechaCorta(a.fecha_inicio)} – ${fechaCorta(a.fecha_fin)}</span>
-            ${esMia ? `<button class="enlace" data-quitar-asig="${a.id}" data-nombre="${esc(nombre)}">quitar</button>` : ""}
-          </li>`;
-        }).join("")}</ul>` : `<p class="meta">Sin programas asignados.</p>`}
-        <form novalidate class="f-asignar" hidden>
-          ${st.programas.length === 0
-            ? `<p class="ayuda">Primero crea una ${tipoProg} en la pestaña ${esEntrenador ? "Rutinas" : "Planes"}.</p>`
-            : `<label>${esEntrenador ? "Rutina" : "Plan"}<select data-c="programa">${st.programas.map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("")}</select></label>
-               <div class="rejilla">
-                 <label>Fecha de inicio<input type="date" data-c="inicio" value="${hoy}" /></label>
-                 <label>Fecha de fin<input type="date" data-c="fin" value="${sumarDiasISO(hoy, 27)}" /></label>
-               </div>
-               <div class="error" data-err hidden></div>
-               <button type="submit">Guardar asignación</button>`}
+        <p class="sub">De menor a mayor cumplimiento ${esEntrenador ? "del entrenamiento" : "de la alimentación"}: arriba están los clientes en riesgo. El total suma ejercicios y comidas (RS-05).</p>
+        <div id="adherencia"><p class="vacio">Cargando…</p></div>
+      </section>
+
+      <section class="tarjeta">
+        <h2>Asignar ${esEntrenador ? "rutina" : "plan alimenticio"}</h2>
+        ${clientes.length === 0 ? `<p class="vacio">Primero invita a un cliente.</p>`
+          : programas.length === 0 ? `<p class="vacio">Primero crea ${esEntrenador ? "una rutina" : "un plan"}.</p>` : `
+        <form id="f-asig" novalidate>
+          <label for="a-cliente">Cliente</label>
+          <select id="a-cliente">${clientes.map(c => `<option value="${c.usuario_id}">${esc(c.nombre)}</option>`).join("")}</select>
+          <label for="a-programa">${esEntrenador ? "Rutina" : "Plan"}</label>
+          <select id="a-programa">${programas.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("")}</select>
+          <div class="rejilla">
+            <div><label for="a-inicio">Fecha de inicio</label><input id="a-inicio" type="date" value="${hoy}" /></div>
+            <div><label for="a-fin">Fecha de fin</label><input id="a-fin" type="date" /></div>
+          </div>
+          <div class="error" id="e-asig" hidden></div>
+          <button type="submit">Asignar</button>
+        </form>`}
+      </section>
+
+      <section>
+        <h2>Mis clientes</h2>
+        <div id="lista-clientes"></div>
+      </section>
+
+      <section class="tarjeta">
+        <h2>Invitar cliente</h2>
+        <form id="f-inv" novalidate>
+          <div class="rejilla">
+            <div><label for="i-nombre">Nombre</label><input id="i-nombre" maxlength="100" autocomplete="off" /></div>
+            <div><label for="i-correo">Correo</label><input id="i-correo" type="email" maxlength="120" autocomplete="off" /></div>
+          </div>
+          <div class="error" id="e-inv" hidden></div>
+          <button type="submit">Generar código (72 h)</button>
         </form>
-      </div>`;
-    }).join("")}`;
+        <div id="invitaciones"></div>
+      </section>`;
 
-  // ---- Registrar cliente (CU-02 + CU-03)
-  const fInv = $<HTMLFormElement>("#f-invitar", cont);
-  fInv.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const nombre = $<HTMLInputElement>("#inv-nombre", fInv).value, correo = $<HTMLInputElement>("#inv-correo", fInv).value;
-    const err = $("[data-err]", fInv);
-    const errores = validarAltaCliente(nombre, correo);
-    mostrarErrores(err, errores);
-    if (errores.length) return;
-    try {
-      const inv = await conBoton($<HTMLButtonElement>("button[type=submit]", fInv), () => crearInvitacion(perfil.id, nombre, correo));
-      if (!inv) return;
-      st.invitaciones = [inv, ...st.invitaciones];
-      render(ctx, st);
-      const det = $<HTMLDetailsElement>("#invitar", cont);
-      det.open = true;
-      $("#codigo-generado", cont).innerHTML = `
-        <div class="codigo-ok">
-          <p>Código para <strong>${esc(inv.nombre)}</strong>. Compártelo por el medio que prefieras:</p>
-          <code class="token">${esc(inv.token)}</code>
-          <button class="chico" data-copiar="${esc(inv.token)}">Copiar código</button>
-        </div>`;
-    } catch (e) { mostrarErrores(err, [(e as Error).message]); }
-  });
+    void pintarAdherencia(cont, perfil);
+    cont.querySelectorAll<HTMLButtonElement>(".segmentado button").forEach(b => b.addEventListener("click", () => {
+      ventana = Number(b.dataset.v) as Ventana;
+      cont.querySelectorAll(".segmentado button").forEach(x => x.classList.toggle("activa", x === b));
+      void pintarAdherencia(cont, perfil);
+    }));
 
-  // ---- Acciones de invitaciones y asignaciones (delegadas en elementos recreados)
-  cont.querySelectorAll<HTMLButtonElement>("[data-copiar]").forEach((b) => b.addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText(b.dataset.copiar ?? ""); aviso("Código copiado."); }
-    catch { aviso("No se pudo copiar; selecciona el código y cópialo manualmente.", "error"); }
-  }));
-  $$<HTMLButtonElement>("[data-reemitir]", cont).forEach((b) => b.addEventListener("click", async () => {
-    try {
-      const nueva = await reemitirInvitacion(Number(b.dataset.reemitir));
-      st.invitaciones = st.invitaciones.map((i) => (i.id === nueva.id ? nueva : i));
-      aviso("Código reemitido: el anterior ya no sirve."); render(ctx, st);
-    } catch (e) { aviso((e as Error).message, "error"); }
-  }));
-  $$<HTMLButtonElement>("[data-cancelar]", cont).forEach((b) => b.addEventListener("click", async () => {
-    if (!(await confirmar(`¿Cancelar la invitación de ${b.dataset.nombre}? El código dejará de funcionar.`, "Cancelar invitación"))) return;
-    try {
-      await cancelarInvitacion(Number(b.dataset.cancelar));
-      st.invitaciones = st.invitaciones.filter((i) => i.id !== Number(b.dataset.cancelar));
-      render(ctx, st);
-    } catch (e) { aviso((e as Error).message, "error"); }
-  }));
-  $$<HTMLButtonElement>("[data-quitar-asig]", cont).forEach((b) => b.addEventListener("click", async () => {
-    if (!(await confirmar(`¿Quitar la asignación de "${b.dataset.nombre}"? El cliente dejará de verla en su día.`, "Quitar"))) return;
-    try {
-      await eliminarAsignacion(Number(b.dataset.quitarAsig));
-      st.asignaciones = await listarAsignaciones();
-      render(ctx, st);
-    } catch (e) { aviso((e as Error).message, "error"); }
-  }));
+    pintarClientes(cont, perfil, clientes, asignaciones, hoy);
+    pintarInvitaciones(cont, perfil, invitaciones);
 
-  // ---- Asignar programa (CU-04)
-  $$("[data-cliente]", cont).forEach((tarjeta) => {
-    const clienteId = tarjeta.dataset.cliente!;
-    const form = $<HTMLFormElement>(".f-asignar", tarjeta);
-    $("[data-abrir-asignar]", tarjeta).addEventListener("click", () => { form.hidden = !form.hidden; });
-    form.addEventListener("submit", async (ev) => {
+    cont.querySelector<HTMLFormElement>("#f-asig")?.addEventListener("submit", async ev => {
       ev.preventDefault();
-      const err = $("[data-err]", form);
-      const progId = Number($<HTMLSelectElement>('[data-c="programa"]', form).value);
+      const prog = Number($<HTMLSelectElement>(cont, "#a-programa").value);
       const nueva: Asignacion = {
-        cliente_id: clienteId, asignado_por: perfil.id,
-        rutina_id: esEntrenador ? progId : null, plan_id: esEntrenador ? null : progId,
-        fecha_inicio: $<HTMLInputElement>('[data-c="inicio"]', form).value,
-        fecha_fin: $<HTMLInputElement>('[data-c="fin"]', form).value,
+        cliente_id: $<HTMLSelectElement>(cont, "#a-cliente").value, asignado_por: perfil.id,
+        rutina_id: esEntrenador ? prog : null, plan_id: esEntrenador ? null : prog,
+        fecha_inicio: $<HTMLInputElement>(cont, "#a-inicio").value, fecha_fin: $<HTMLInputElement>(cont, "#a-fin").value,
       };
+      const res = validarAsignacion(nueva, asignaciones);
+      const err = $(cont, "#e-asig");
+      if (!res.ok) { mostrarErrores(err, res.errores); return; }
+      mostrarErrores(err, []);
+      try { await crearAsignacion(nueva); avisar("Asignación guardada."); void vistaClientes(cont, perfil); }
+      catch (e) { mostrarErrores(err, [(e as Error).message]); }
+    });
+
+    $<HTMLFormElement>(cont, "#f-inv").addEventListener("submit", async ev => {
+      ev.preventDefault();
+      const nombre = $<HTMLInputElement>(cont, "#i-nombre").value.trim();
+      const correo = $<HTMLInputElement>(cont, "#i-correo").value.trim();
+      const errores: string[] = [];
+      if (nombre.length < 2 || nombre.length > 100) errores.push("El nombre debe tener de 2 a 100 caracteres.");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) errores.push("Capture un correo electrónico válido.");
+      const err = $(cont, "#e-inv");
+      mostrarErrores(err, errores);
+      if (errores.length) return;
       try {
-        await conBoton($<HTMLButtonElement>("button[type=submit]", form),
-          () => crearAsignacion(nueva, st.asignaciones.filter((a) => a.cliente_id === clienteId)));
-        aviso("Programa asignado.");
-        st.asignaciones = await listarAsignaciones();
-        render(ctx, st);
+        await crearInvitacion(perfil.id, nombre, correo);
+        avisar("Código generado. Compártelo con tu cliente.");
+        pintarInvitaciones(cont, perfil, await listarInvitaciones());
+        (ev.target as HTMLFormElement).reset();
       } catch (e) { mostrarErrores(err, [(e as Error).message]); }
     });
-  });
+  } catch (e) { cont.innerHTML = `<p class="error">${esc((e as Error).message)}</p>`; }
+}
+
+type Area = { programados: number; completados: number; adherencia: number | null };
+
+function nivel(a: number | null) { return a === null ? "nd" : a < 50 ? "baja" : a < 80 ? "media" : "alta"; }
+
+function filaArea(titulo: string, a: Area, principal: boolean) {
+  return `<div class="area ${principal ? "principal" : ""} nivel-${nivel(a.adherencia)}">
+    <div class="fila-titulo"><span>${titulo}</span><strong>${textoAdherencia(a.adherencia)}</strong></div>
+    <div class="barra"><span style="width:${a.adherencia ?? 0}%"></span></div>
+    <div class="sub">${a.programados === 0 ? "Sin programa en la ventana" : `${a.completados} de ${a.programados} completados`}</div>
+  </div>`;
+}
+
+async function pintarAdherencia(cont: HTMLElement, perfil: Perfil) {
+  const caja = $(cont, "#adherencia");
+  try {
+    const datos = await adherenciaCartera(ventana);
+    if (datos.length === 0) { caja.innerHTML = `<p class="vacio">Sin clientes todavía.</p>`; return; }
+    const conDesglose = datos.some(c => c.entrenamiento.programados + c.alimentacion.programados > 0) || datos.every(c => c.programados === 0);
+    const propia = perfil.rol === "ENTRENADOR" ? "entrenamiento" : "alimentacion";
+    const otra = propia === "entrenamiento" ? "alimentacion" : "entrenamiento";
+    const titulo = { entrenamiento: "🏋️ Entrenamiento", alimentacion: "🍽️ Alimentación" };
+    // Se ordena por el área del instructor (la que él puede corregir); sin desglose, por el total de RS-05.
+    const lista = conDesglose
+      ? ordenarPorRiesgo(datos.map(c => ({ ...c, orden: c, adherencia: c[propia].adherencia }))).map(x => x.orden)
+      : ordenarPorRiesgo(datos);
+    caja.innerHTML = `<ul class="adherencia">${lista.map(c => `<li>
+        <div class="fila-titulo"><strong>${esc(c.nombre)}</strong><span class="sub">Total: ${textoAdherencia(c.adherencia)}</span></div>
+        ${conDesglose
+          ? filaArea(titulo[propia], c[propia], true) + filaArea(titulo[otra], c[otra], false)
+          : filaArea("Total (ejercicios + comidas)", c, true)}
+      </li>`).join("")}</ul>`;
+  } catch (e) { caja.innerHTML = `<p class="error">${esc((e as Error).message)}</p>`; }
+}
+
+function pintarClientes(cont: HTMLElement, perfil: Perfil, clientes: ClienteCartera[], asignaciones: AsignacionDetalle[], hoy: string) {
+  const caja = $(cont, "#lista-clientes");
+  if (clientes.length === 0) { caja.innerHTML = `<p class="vacio">Aún no tienes clientes. Invítalos abajo.</p>`; return; }
+  caja.innerHTML = clientes.map(c => {
+    const suyas = asignaciones.filter(a => a.cliente_id === c.usuario_id);
+    return `<div class="tarjeta">
+      <strong>${esc(c.nombre)}</strong> <span class="sub">${esc(c.correo)}</span>
+      ${suyas.length === 0 ? `<p class="sub">Sin asignaciones.</p>` : `<ul class="asignaciones">${suyas.map(a => {
+        const estado = estaVigente(a, hoy) ? "vigente" : a.fecha_fin < hoy ? "terminada" : "próxima";
+        return `<li>
+          <span class="etiqueta ${estado === "vigente" ? "ok" : ""}">${estado}</span>
+          ${a.rutina_id ? "🏋️" : "🍽️"} ${esc(a.nombre_programa)} · ${a.fecha_inicio} → ${a.fecha_fin}
+          ${a.propia ? `<button class="enlace peligro-txt" data-quitar-asig="${a.id}" data-nombre="${esc(a.nombre_programa)}">Quitar</button>` : ""}
+        </li>`;
+      }).join("")}</ul>`}
+    </div>`;
+  }).join("");
+  caja.querySelectorAll<HTMLButtonElement>("[data-quitar-asig]").forEach(b => b.addEventListener("click", async () => {
+    const ok = await confirmar(`¿Quitar la asignación '${b.dataset.nombre}'? Las marcas de cumplimiento ya registradas se conservan.`, "Quitar");
+    if (!ok) return;
+    try { await eliminarAsignacion(Number(b.dataset.quitarAsig)); avisar("Asignación eliminada."); void vistaClientes(cont, perfil); }
+    catch (e) { avisar((e as Error).message, "error"); }
+  }));
+}
+
+function enlaceActivacion(token: string): string {
+  return `${location.origin}${location.pathname}#activar=${token}`;
+}
+
+function pintarInvitaciones(cont: HTMLElement, perfil: Perfil, invitaciones: Invitacion[]) {
+  const caja = $(cont, "#invitaciones");
+  const pendientes = invitaciones.filter(i => !i.usada_en);
+  if (pendientes.length === 0) { caja.innerHTML = ""; return; }
+  const ahora = Date.now();
+  caja.innerHTML = `<h3>Invitaciones pendientes</h3>` + pendientes.map(i => {
+    const caducada = new Date(i.expira_en).getTime() < ahora;
+    return `<div class="invitacion ${caducada ? "caducada" : ""}">
+      <div><strong>${esc(i.nombre)}</strong> <span class="sub">${esc(i.correo)}</span></div>
+      <div class="sub">${caducada ? "Caducada" : "Vence " + new Date(i.expira_en).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}</div>
+      ${caducada ? "" : `<code class="codigo">${esc(i.token)}</code>`}
+      <div class="acciones">
+        ${caducada ? `<button class="chico" data-reemitir="${i.id}">Reemitir código</button>`
+          : `<button class="secundario chico" data-copiar="${esc(enlaceActivacion(i.token))}">Copiar enlace</button>
+             <button class="secundario chico" data-copiar="${esc(i.token)}">Copiar código</button>`}
+        <button class="enlace peligro-txt" data-borrar="${i.id}" data-nombre="${esc(i.nombre)}">Cancelar</button>
+      </div>
+    </div>`;
+  }).join("");
+  caja.querySelectorAll<HTMLButtonElement>("[data-copiar]").forEach(b => b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copiar!); avisar("Copiado."); }
+    catch { avisar("No se pudo copiar; selecciónalo manualmente.", "error"); }
+  }));
+  caja.querySelectorAll<HTMLButtonElement>("[data-reemitir]").forEach(b => b.addEventListener("click", async () => {
+    try { await reemitirInvitacion(Number(b.dataset.reemitir)); avisar("Nuevo código emitido (72 h)."); pintarInvitaciones(cont, perfil, await listarInvitaciones()); }
+    catch (e) { avisar((e as Error).message, "error"); }
+  }));
+  caja.querySelectorAll<HTMLButtonElement>("[data-borrar]").forEach(b => b.addEventListener("click", async () => {
+    if (!await confirmar(`¿Cancelar la invitación de '${b.dataset.nombre}'? El código dejará de funcionar.`, "Cancelar invitación")) return;
+    try { await eliminarInvitacion(Number(b.dataset.borrar)); pintarInvitaciones(cont, perfil, await listarInvitaciones()); }
+    catch (e) { avisar((e as Error).message, "error"); }
+  }));
 }

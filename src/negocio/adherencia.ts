@@ -40,3 +40,27 @@ export function diaIso(fechaIso: string): number {
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();   // 0 = domingo
   return dow === 0 ? 7 : dow;
 }
+
+/** Adherencia con desglose por área: entrenamiento (entrenador) y alimentación (nutriólogo). */
+export interface AdherenciaDesglosada extends AdherenciaCliente {
+  entrenamiento: { programados: number; completados: number; adherencia: number | null };
+  alimentacion: { programados: number; completados: number; adherencia: number | null };
+}
+
+/**
+ * Arma el desglose a partir de los conteos del servidor. El total sigue la
+ * fórmula de RS-05: (ejercicios + comidas completados) ÷ (ejercicios + comidas programados).
+ */
+export function desglosarAdherencia(f: {
+  cliente_id: string; nombre: string;
+  ej_programados: number; ej_completados: number; com_programados: number; com_completados: number;
+}): AdherenciaDesglosada {
+  const programados = f.ej_programados + f.com_programados;
+  const completados = f.ej_completados + f.com_completados;
+  return {
+    cliente_id: f.cliente_id, nombre: f.nombre, programados, completados,
+    adherencia: calcularAdherencia(programados, completados),
+    entrenamiento: { programados: f.ej_programados, completados: f.ej_completados, adherencia: calcularAdherencia(f.ej_programados, f.ej_completados) },
+    alimentacion: { programados: f.com_programados, completados: f.com_completados, adherencia: calcularAdherencia(f.com_programados, f.com_completados) },
+  };
+}

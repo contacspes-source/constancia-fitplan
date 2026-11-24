@@ -1,164 +1,159 @@
-/**
- * presentacion/rutinas.ts — Gestión de rutinas del entrenador (RS-01, CU-08, CU-09).
- * Rutas: #/rutinas (lista) · #/rutinas/nueva · #/rutinas/:id (editar).
- * Al fallar la validación se conservan los datos capturados y cada mensaje
- * aparece junto al campo o ejercicio que lo originó (RS-01).
- */
-import type { Ejercicio, EjercicioRutina, Rutina } from "@/tipos";
-import { listarEjercicios } from "@/datos/catalogos";
-import { eliminarRutina, guardarRutina, listarRutinas, obtenerRutina } from "@/datos/rutinas";
-import { validarRutina } from "@/negocio/validacion";
-import type { Contexto } from "./app";
-import { ir } from "./app";
-import { $, $$, aviso, cargando, conBoton, confirmar, esc, fechaCorta, mostrarErrores } from "./dom";
+/** presentacion/rutinas.ts — Gestión de rutinas del entrenador (RS-01, CU-07..CU-09). */
+import { eliminarRutina, guardarRutina, listarEjercicios, listarRutinas, obtenerRutina } from "@/datos/repositorios";
+import { validarEjercicio, validarRutina } from "@/negocio/validacion";
+import type { Ejercicio, EjercicioRutina, Perfil, Rutina } from "@/tipos";
+import { $, avisar, cargando, confirmar, DIAS, esc, mostrarErrores } from "./ui";
 
-const DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
-
-export async function pantallaRutinas(ctx: Contexto) {
-  const [p] = ctx.params;
-  if (!p) return lista(ctx);
-  if (p === "nueva") return formulario(ctx, null);
-  const id = Number(p);
-  if (!Number.isInteger(id)) return ir("rutinas");
-  return formulario(ctx, id);
-}
-
-async function lista({ cont }: Contexto) {
+export async function vistaRutinas(cont: HTMLElement, perfil: Perfil) {
   cargando(cont);
-  const rutinas = await listarRutinas();
-  cont.innerHTML = `
-    <div class="encabezado">
-      <h2>Mis rutinas</h2>
-      <a class="boton" href="#/rutinas/nueva">+ Nueva rutina</a>
-    </div>
-    ${rutinas.length === 0
-      ? `<div class="tarjeta vacio">Aún no tienes rutinas. Crea la primera para poder asignarla a tus clientes.</div>`
-      : rutinas.map((r) => `
-        <div class="tarjeta fila-lista">
+  try {
+    const rutinas = await listarRutinas();
+    cont.innerHTML = `
+      <div class="fila-titulo"><h2>Mis rutinas</h2><button id="nueva">+ Nueva rutina</button></div>
+      ${rutinas.length === 0 ? `<p class="vacio">Aún no tienes rutinas. Crea la primera para poder asignarla.</p>` : ""}
+      ${rutinas.map(r => `
+        <div class="tarjeta item">
           <div>
             <strong>${esc(r.nombre)}</strong>
-            <div class="meta">${r.num_ejercicios} ejercicio${r.num_ejercicios === 1 ? "" : "s"} · creada ${fechaCorta(r.creado_en)}</div>
-            ${r.objetivo ? `<div class="meta">${esc(r.objetivo)}</div>` : ""}
+            <div class="sub">${r.ejercicios} ejercicio${r.ejercicios === 1 ? "" : "s"}${r.objetivo ? " · " + esc(r.objetivo) : ""}</div>
           </div>
           <div class="acciones">
-            <a class="boton secundario chico" href="#/rutinas/${r.id}">Editar</a>
-            <button class="peligro chico" data-borrar="${r.id}" data-nombre="${esc(r.nombre)}">Eliminar</button>
+            <button class="secundario chico" data-editar="${r.id}">Editar</button>
+            <button class="peligro chico" data-eliminar="${r.id}" data-nombre="${esc(r.nombre)}">Eliminar</button>
           </div>
         </div>`).join("")}`;
-
-  $$<HTMLButtonElement>("[data-borrar]", cont).forEach((b) => b.addEventListener("click", async () => {
-    const nombre = b.dataset.nombre ?? "";
-    // Texto exacto de RS-01.
-    if (!(await confirmar(`¿Está seguro de eliminar la rutina '${nombre}'? Esta acción no se puede deshacer.`))) return;
-    try { await eliminarRutina(Number(b.dataset.borrar)); aviso(`Rutina "${nombre}" eliminada.`); void lista({ cont } as Contexto); }
-    catch (e) { aviso((e as Error).message, "error"); }
-  }));
+    $(cont, "#nueva").addEventListener("click", () => void editorRutina(cont, perfil));
+    cont.querySelectorAll<HTMLButtonElement>("[data-editar]").forEach(b =>
+      b.addEventListener("click", () => void editorRutina(cont, perfil, Number(b.dataset.editar))));
+    cont.querySelectorAll<HTMLButtonElement>("[data-eliminar]").forEach(b =>
+      b.addEventListener("click", async () => {
+        const ok = await confirmar(`¿Está seguro de eliminar la rutina '${b.dataset.nombre}'? Esta acción no se puede deshacer.`);
+        if (!ok) return;
+        try { await eliminarRutina(Number(b.dataset.eliminar)); avisar("Rutina eliminada."); void vistaRutinas(cont, perfil); }
+        catch (e) { avisar((e as Error).message, "error"); }
+      }));
+  } catch (e) { cont.innerHTML = `<p class="error">${esc((e as Error).message)}</p>`; }
 }
 
-function opcionesEjercicio(catalogo: Ejercicio[], seleccionado?: number) {
-  const grupos = new Map<string, Ejercicio[]>();
-  catalogo.forEach((e) => grupos.set(e.grupo_muscular, [...(grupos.get(e.grupo_muscular) ?? []), e]));
-  return `<option value="">— Elige un ejercicio —</option>` + [...grupos].map(([g, lista]) =>
-    `<optgroup label="${esc(g)}">${lista.map((e) =>
-      `<option value="${e.id}" ${e.id === seleccionado ? "selected" : ""}>${esc(e.nombre)}</option>`).join("")}</optgroup>`).join("");
+function filaVacia(dia = 1): EjercicioRutina {
+  return { ejercicio_id: 0, dia_semana: dia, series: 3, repeticiones: "10-12", carga_kg: 0, descanso_seg: 60 };
 }
 
-function filaEjercicio(catalogo: Ejercicio[], e: Partial<EjercicioRutina>, n: number) {
-  return `
-    <div class="tarjeta ejercicio" data-fila ${e.id !== undefined ? `data-id="${e.id}"` : ""}>
-      <div class="ejercicio-cab">
-        <strong>Ejercicio <span data-num>${n}</span></strong>
-        <button type="button" class="secundario chico" data-quitar aria-label="Quitar ejercicio">Quitar</button>
-      </div>
-      <label>Ejercicio del catálogo<select data-c="ejercicio_id">${opcionesEjercicio(catalogo, e.ejercicio_id)}</select></label>
-      <div class="rejilla">
-        <label>Día<select data-c="dia_semana">${DIAS.map((d, i) =>
-          `<option value="${i + 1}" ${e.dia_semana === i + 1 ? "selected" : ""}>${d}</option>`).join("")}</select></label>
-        <label>Series<input data-c="series" type="number" inputmode="numeric" min="1" max="50" step="1" value="${esc(e.series ?? 3)}" /></label>
-        <label>Repeticiones<input data-c="repeticiones" type="text" placeholder="12 o 10-12" value="${esc(e.repeticiones ?? "10-12")}" /></label>
-        <label>Carga (kg)<input data-c="carga_kg" type="number" inputmode="decimal" min="0" step="0.5" value="${esc(e.carga_kg ?? 0)}" /></label>
-        <label>Descanso (s)<input data-c="descanso_seg" type="number" inputmode="numeric" min="0" step="5" value="${esc(e.descanso_seg ?? 60)}" /></label>
-      </div>
-      <div class="error" data-err-fila hidden></div>
-    </div>`;
-}
-
-/** Lee el formulario tal cual lo capturó el usuario; la validación decide si es correcto. */
-function leerEjercicios(cont: HTMLElement): EjercicioRutina[] {
-  return $$("[data-fila]", cont).map((f) => {
-    const v = (c: string) => $<HTMLInputElement>(`[data-c="${c}"]`, f).value.trim();
-    const num = (c: string) => (v(c) === "" ? NaN : Number(v(c)));
-    return {
-      id: f.dataset.id ? Number(f.dataset.id) : undefined,
-      ejercicio_id: num("ejercicio_id"), dia_semana: num("dia_semana"), series: num("series"),
-      repeticiones: v("repeticiones"), carga_kg: num("carga_kg"), descanso_seg: num("descanso_seg"),
-    };
-  });
-}
-
-async function formulario({ cont, perfil }: Contexto, id: number | null) {
+async function editorRutina(cont: HTMLElement, perfil: Perfil, id?: number) {
   cargando(cont);
-  const [catalogo, rutina] = await Promise.all([listarEjercicios(), id === null ? Promise.resolve(null) : obtenerRutina(id)]);
-  const inicial: Partial<EjercicioRutina>[] = rutina?.ejercicios.length ? rutina.ejercicios : [{ dia_semana: 1 }];
+  let catalogo: Ejercicio[]; let rutina: Rutina;
+  try {
+    [catalogo, rutina] = await Promise.all([
+      listarEjercicios(),
+      id !== undefined ? obtenerRutina(id)
+        : Promise.resolve<Rutina>({ entrenador_id: perfil.id, nombre: "", objetivo: null, es_plantilla: false, origen_id: null, ejercicios: [] }),
+    ]);
+  } catch (e) { cont.innerHTML = `<p class="error">${esc((e as Error).message)}</p>`; return; }
+
+  const grupos = [...new Set(catalogo.map(e => e.grupo_muscular))];
+  const opcionesEjercicio = (sel: number) => `<option value="0">— Selecciona —</option>` + grupos.map(g =>
+    `<optgroup label="${esc(g)}">${catalogo.filter(e => e.grupo_muscular === g).map(e =>
+      `<option value="${e.id}" ${e.id === sel ? "selected" : ""}>${esc(e.nombre)}</option>`).join("")}</optgroup>`).join("");
 
   cont.innerHTML = `
-    <div class="encabezado">
-      <h2>${rutina ? "Editar rutina" : "Nueva rutina"}</h2>
-      <a class="boton secundario" href="#/rutinas">Volver</a>
+    <div class="fila-titulo"><h2>${id ? "Editar rutina" : "Nueva rutina"}</h2><button class="secundario chico" id="cancelar">Volver</button></div>
+    <div class="tarjeta">
+      <label for="r-nombre">Nombre de la rutina</label>
+      <input id="r-nombre" maxlength="100" value="${esc(rutina.nombre)}" />
+      <div class="error" id="e-nombre" hidden></div>
+      <label for="r-objetivo">Descripción / objetivo (opcional)</label>
+      <textarea id="r-objetivo" rows="2">${esc(rutina.objetivo ?? "")}</textarea>
     </div>
-    <form novalidate id="f-rutina">
-      <div class="tarjeta">
-        <label for="nombre">Nombre de la rutina</label>
-        <input id="nombre" maxlength="100" value="${esc(rutina?.nombre ?? "")}" placeholder="Ej. Fuerza tren superior" />
-        <div class="error" id="err-nombre" hidden></div>
-        <label for="objetivo">Descripción u objetivo (opcional)</label>
-        <textarea id="objetivo" rows="2">${esc(rutina?.objetivo ?? "")}</textarea>
-      </div>
-      <div id="ejercicios">${inicial.map((e, i) => filaEjercicio(catalogo, e, i + 1)).join("")}</div>
-      <div class="error" id="err-lista" hidden></div>
-      <button type="button" class="secundario" id="agregar">+ Agregar ejercicio</button>
-      <div class="pie-form"><button type="submit">Guardar rutina</button></div>
-    </form>`;
+    <h3>Semana</h3>
+    <p class="sub">Los días sin ejercicios son días de descanso: el cliente verá "Hoy es día de descanso programado".</p>
+    <div class="resumen-semana" id="resumen"></div>
+    <div id="filas"></div>
+    <div class="error" id="e-lista" hidden></div>
+    <div class="error caja" id="e-general" hidden></div>
+    <div class="barra-guardar"><button id="guardar">Guardar rutina</button></div>`;
 
-  const lista = $("#ejercicios", cont);
-  const renumerar = () => $$("[data-num]", lista).forEach((s, i) => (s.textContent = String(i + 1)));
-
-  $("#agregar", cont).addEventListener("click", () => {
-    const previos = leerEjercicios(cont);
-    const ultimo = previos[previos.length - 1];
-    lista.insertAdjacentHTML("beforeend", filaEjercicio(catalogo, { dia_semana: ultimo?.dia_semana || 1 }, lista.children.length + 1));
-    lista.lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
-  });
-  lista.addEventListener("click", (ev) => {
-    const b = (ev.target as HTMLElement).closest("[data-quitar]");
-    if (b) { b.closest("[data-fila]")?.remove(); renumerar(); }
-  });
-
-  const form = $<HTMLFormElement>("#f-rutina", cont);
-  form.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const datos: Rutina = {
-      id: rutina?.id, entrenador_id: rutina?.entrenador_id ?? perfil.id,
-      nombre: $<HTMLInputElement>("#nombre", cont).value, objetivo: $<HTMLTextAreaElement>("#objetivo", cont).value,
-      es_plantilla: rutina?.es_plantilla ?? false, origen_id: rutina?.origen_id ?? null,
-      ejercicios: leerEjercicios(cont),
+  const filas = $(cont, "#filas");
+  const leerFila = (div: HTMLElement): EjercicioRutina => {
+    const v = (n: string) => div.querySelector<HTMLInputElement>(`[name=${n}]`)!.value.trim();
+    const num = (n: string) => v(n) === "" ? NaN : Number(v(n));
+    return {
+      id: div.dataset.id ? Number(div.dataset.id) : undefined,
+      ejercicio_id: Number(v("ejercicio_id")), dia_semana: Number(div.dataset.dia),
+      series: num("series"), repeticiones: v("repeticiones"), carga_kg: num("carga_kg"), descanso_seg: num("descanso_seg"),
     };
-    const v = validarRutina(datos);
+  };
+  // El orden del DOM (por día) es el orden de la lista: los índices coinciden.
+  const leerTodas = () => [...filas.querySelectorAll<HTMLElement>(".fila-ej")].map(leerFila);
 
-    // Repartir cada mensaje junto a su campo.
-    const filas = $$("[data-fila]", lista);
-    mostrarErrores($("#err-nombre", cont), v.errores.filter((e) => e.includes("Nombre de la rutina")));
-    mostrarErrores($("#err-lista", cont), v.errores.filter((e) => e.includes("Lista de ejercicios")));
-    filas.forEach((f, i) => mostrarErrores($("[data-err-fila]", f), v.errores
-      .filter((e) => e.startsWith(`Ejercicio ${i + 1}: `)).map((e) => e.replace(/^Ejercicio \d+: /, ""))));
-    if (!v.ok) { cont.querySelector<HTMLElement>(".error:not([hidden])")?.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+  const pintar = (entrada: EjercicioRutina[]) => {
+    const lista = [...entrada].sort((a, b) => a.dia_semana - b.dia_semana);
+    let n = 0;
+    $(cont, "#resumen").innerHTML = DIAS.slice(1).map((d, k) => {
+      const cuantos = lista.filter(e => e.dia_semana === k + 1).length;
+      return `<a href="#dia-${k + 1}" class="chip ${cuantos ? "entrena" : "descansa"}" title="${d}">${d.slice(0, 2)}<small>${cuantos || "😴"}</small></a>`;
+    }).join("");
+    filas.innerHTML = DIAS.slice(1).map((nombreDia, k) => {
+      const dia = k + 1;
+      const delDia = lista.filter(e => e.dia_semana === dia);
+      return `
+      <div class="tarjeta dia ${delDia.length ? "" : "dia-descanso"}" id="dia-${dia}">
+        <div class="fila-titulo">
+          <h3>${nombreDia}</h3>
+          ${delDia.length ? `<span class="sub">${delDia.length} ejercicio${delDia.length === 1 ? "" : "s"}</span>` : `<span class="etiqueta">😴 Descanso</span>`}
+        </div>
+        ${delDia.map(e => { const i = n++; return `
+        <div class="fila-ej" data-dia="${dia}" ${e.id !== undefined ? `data-id="${e.id}"` : ""}>
+          <div class="fila-titulo">
+            <select name="ejercicio_id" aria-label="Ejercicio">${opcionesEjercicio(e.ejercicio_id)}</select>
+            <button class="enlace peligro-txt" data-quitar="${i}" aria-label="Quitar ejercicio">Quitar</button>
+          </div>
+          <div class="rejilla">
+            <div><label>Series (1-50)</label><input name="series" type="number" inputmode="numeric" min="1" max="50" step="1" value="${Number.isNaN(e.series) ? "" : e.series}" /></div>
+            <div><label>Repeticiones</label><input name="repeticiones" placeholder="12 o 10-12" value="${esc(e.repeticiones)}" /></div>
+            <div><label>Carga (kg)</label><input name="carga_kg" type="number" inputmode="decimal" min="0" step="0.5" value="${Number.isNaN(e.carga_kg) ? "" : e.carga_kg}" /></div>
+            <div><label>Descanso (s)</label><input name="descanso_seg" type="number" inputmode="numeric" min="0" step="5" value="${Number.isNaN(e.descanso_seg) ? "" : e.descanso_seg}" /></div>
+          </div>
+          <div class="error" data-err hidden></div>
+        </div>`; }).join("")}
+        <div class="acciones">
+          <button class="secundario chico" data-agregar="${dia}">+ Ejercicio</button>
+          ${delDia.length ? `<button class="enlace" data-descanso="${dia}">Hacer día de descanso</button>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+    filas.querySelectorAll<HTMLButtonElement>("[data-quitar]").forEach(b => b.addEventListener("click", () => {
+      const l = leerTodas(); l.splice(Number(b.dataset.quitar), 1); pintar(l);
+    }));
+    filas.querySelectorAll<HTMLButtonElement>("[data-agregar]").forEach(b => b.addEventListener("click", () => {
+      const dia = Number(b.dataset.agregar);
+      const l = leerTodas(); l.push(filaVacia(dia)); pintar(l);
+      const ultimos = filas.querySelectorAll<HTMLElement>(`.fila-ej[data-dia="${dia}"]`);
+      ultimos[ultimos.length - 1]?.querySelector("select")?.focus();
+    }));
+    filas.querySelectorAll<HTMLButtonElement>("[data-descanso]").forEach(b => b.addEventListener("click", async () => {
+      const dia = Number(b.dataset.descanso);
+      if (!await confirmar(`¿Quitar todos los ejercicios del ${DIAS[dia].toLowerCase()} y dejarlo como día de descanso?`, "Hacer descanso")) return;
+      pintar(leerTodas().filter(e => e.dia_semana !== dia));
+    }));
+  };
+  pintar(rutina.ejercicios);
 
-    try {
-      await conBoton($<HTMLButtonElement>("button[type=submit]", form), () => guardarRutina(datos));
-      aviso(rutina ? "Rutina actualizada." : "Rutina creada.");
-      ir("rutinas");
-    } catch (e) {
-      mostrarErrores($("#err-lista", cont), [(e as Error).message]);   // datos capturados se conservan
-    }
+  $(cont, "#cancelar").addEventListener("click", () => void vistaRutinas(cont, perfil));
+
+  $(cont, "#guardar").addEventListener("click", async () => {
+    const r: Rutina = { ...rutina, nombre: $<HTMLInputElement>(cont, "#r-nombre").value, objetivo: $<HTMLTextAreaElement>(cont, "#r-objetivo").value, ejercicios: leerTodas() };
+    const res = validarRutina(r);
+    // Mensajes junto al campo que los origina (ERS §3.1.1): nombre, lista y cada ejercicio.
+    const errNombre = res.errores.filter(m => m.includes("Nombre de la rutina"));
+    mostrarErrores($(cont, "#e-nombre"), errNombre);
+    mostrarErrores($(cont, "#e-lista"), res.errores.filter(m => m.includes("Lista de ejercicios")));
+    filas.querySelectorAll<HTMLElement>(".fila-ej").forEach((div, i) =>
+      mostrarErrores(div.querySelector<HTMLElement>("[data-err]")!, validarEjercicio(r.ejercicios[i])));
+    mostrarErrores($(cont, "#e-general"), []);
+    if (!res.ok) { avisar("Hay campos por corregir.", "error"); return; }
+    const btn = $<HTMLButtonElement>(cont, "#guardar"); btn.disabled = true;
+    try { await guardarRutina(r); avisar("Rutina guardada."); void vistaRutinas(cont, perfil); }
+    catch (e) { mostrarErrores($(cont, "#e-general"), [(e as Error).message]); btn.disabled = false; }
   });
 }
+

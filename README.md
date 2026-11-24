@@ -23,24 +23,18 @@ el servidor, independientemente de lo que muestre la interfaz.
 ## Estructura
 
 ```
-supabase/migrations/   0001 esquema · 0002 acceso y RLS · 0003 catálogos · 0004 catálogos únicos · 0005 permisos de asignaciones · 0006 vista del día y cumplimiento
+supabase/migrations/   0001 esquema · 0002 acceso y RLS · 0003 catálogos
+                       0004 nombres únicos · 0005 asignaciones propias · 0006 vista del día
 src/tipos/             modelo de dominio (diagrama de clases)
 src/negocio/           lógica pura, sin UI ni red (probada en tests/)
-src/datos/             acceso a Supabase y sesión
-src/presentacion/      pantallas
+src/datos/             acceso a Supabase: sesión y repositorios por módulo
+src/presentacion/      pantallas: login/registro, clientes (adherencia,
+                       asignaciones, invitaciones), rutinas, planes, hoy
 tests/                 pruebas unitarias (vitest) — base de la Actividad 14
 tests/sql/             pruebas de servidor por rol (PostgreSQL local, NO en Supabase)
 docs/DECISIONES.md     registro de decisiones (ADR)
+docs/PRUEBAS_MANUALES.md  guion de prueba de punta a punta contra Supabase
 ```
-
-## Pantallas (v1.0)
-
-| Rol | Pantallas | Requerimientos |
-|---|---|---|
-| Todos | Entrar · Soy instructor (registro) · Tengo un código (activar cuenta) | RS-10, RS-03 (CU-01, CU-12) |
-| Entrenador | Rutinas (crear, editar, eliminar) · Clientes (invitar, asignar rutina) · Adherencia | RS-01, RS-03, RS-05 |
-| Nutriólogo | Planes con macros en vivo · Clientes (invitar, asignar plan) · Adherencia | RS-02, RS-03, RS-05 |
-| Cliente | Hoy: rutina y comidas del día, marcar cumplimiento | RS-06, RS-07, RS-14 |
 
 ## Cómo trabajar
 
@@ -55,6 +49,19 @@ npm run build            # dist/ → Cloudflare Pages
 
 Base de datos: ejecutar las migraciones de `supabase/migrations/` en orden
 en el SQL Editor del proyecto (o con `supabase db push`).
+
+## Pantallas (v1.0)
+
+| Rol | Pantallas | Requerimientos |
+|---|---|---|
+| Todos | Inicio de sesión, cierre por inactividad (30 min) | RS-10, RS-12 |
+| Entrenador / Nutriólogo | Registro de cuenta | CU-01 |
+| Entrenador | Clientes (adherencia 7/30 d, asignar rutina, invitar) · Rutinas (crear, editar, eliminar) | RS-01, RS-03, RS-05 |
+| Nutriólogo | Clientes (adherencia, asignar plan, invitar) · Planes (macros en tiempo real) | RS-02, RS-03, RS-05 |
+| Cliente | Activación con código (enlace o captura) · Hoy (ejercicios y comidas del día, marcar cumplimiento) | RS-06, RS-07, RS-14, CU-12 |
+
+Las invitaciones no se envían por correo: el instructor copia el enlace o el
+código y lo comparte con su cliente (WhatsApp, correo propio, etc.).
 
 ## Despliegue (Cloudflare Pages)
 
