@@ -1,0 +1,13 @@
+// Configuración de despliegue en Cloudflare Workers (sitio estático).
+// `npm run build` genera dist/; Cloudflare sirve esos archivos tal cual.
+// Las variables VITE_SUPABASE_* se configuran como variables de BUILD en
+// Cloudflare (Settings → Build → Variables), porque Vite las incrusta al compilar.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "constancia-fitplan",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

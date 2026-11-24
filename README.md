@@ -63,10 +63,13 @@ en el SQL Editor del proyecto (o con `supabase db push`).
 Las invitaciones no se envían por correo: el instructor copia el enlace o el
 código y lo comparte con su cliente (WhatsApp, correo propio, etc.).
 
-## Despliegue (Cloudflare Pages)
+## Despliegue (Cloudflare Workers)
 
-Build command `npm run build`, output `dist`, variables de entorno
-`VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
+Repositorio conectado en Cloudflare → Workers & Pages. Build command
+`npm run build`, deploy command `npx wrangler deploy` (lee `wrangler.jsonc`,
+que publica `dist/` como sitio estático). Las variables `VITE_SUPABASE_URL` y
+`VITE_SUPABASE_ANON_KEY` van como **variables de build**, no de ejecución.
+Cada push a `main` vuelve a publicar.
 
 ## Equipo
 
